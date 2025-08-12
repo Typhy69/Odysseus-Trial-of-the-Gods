@@ -1,0 +1,15 @@
+config_version=5
+
+[application]
+config/name="Odysseus: Trial of the Gods"
+run/main_scene="res://scenes/Title.tscn"
+config/features=PackedStringArray("4.2", "GL_Compatibility")
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[autoload]
+AudioManager="*res://scripts/AudioManager.gd"
