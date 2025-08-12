@@ -1,0 +1,28 @@
+name: Godot 4 HTML5 Export
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Godot
+      uses: firebelley/setup-godot@v1.4
+      with:
+        version: '4.2.1'
+        export-templates: true
+
+    - name: Export Web
+      run: godot --headless --export-release "Web" build/web/index.html
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: build/web
