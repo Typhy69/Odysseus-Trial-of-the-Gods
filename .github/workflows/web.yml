@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Diagnostic + LFS)
+name: Godot 4 HTML5 Export (Self-healing Web preset)
 
 on:
   push:
@@ -13,10 +13,9 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    container: barichello/godot-ci:4.2.2
-
+    container: barichello/godot-ci:4.2.2   # Godot 4.2.2 + templates preinstalled
     steps:
-      - name: Checkout (with LFS)
+      - name: Checkout (with LFS for audio)
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -27,14 +26,40 @@ jobs:
           ls -la
           echo "---- scenes/"; ls -la scenes || true
           echo "---- scripts/"; ls -la scripts || true
-          echo "---- audio/music"; ls -la audio/music || true
 
-      - name: Show export presets
+      # ✅ Force-create/overwrite export_presets.cfg with a 'Web' preset
+      - name: Ensure Web export preset
         run: |
-          echo "==== export_presets.cfg ===="
-          test -f export_presets.cfg && sed -n '1,200p' export_presets.cfg || echo "export_presets.cfg NOT FOUND"
-          echo "==== grep Web preset ===="
-          (grep -n "\[preset.*Web\]" export_presets.cfg && echo "Found Web preset ✅") || (echo "Missing Web preset ❌"; exit 1)
+          cat > export_presets.cfg <<'EOF'
+          [preset.0]
+          name="Web"
+          platform="Web"
+          runnable=false
+          dedicated_server=false
+          export_filter="all_resources"
+          export_path="build/web/index.html"
+
+          [preset.0.options]
+          custom_template/debug=""
+          custom_template/release=""
+          vram_texture_compression/bptc=true
+          vram_texture_compression/s3tc=true
+          vram_texture_compression/etc2=true
+          vram_texture_compression/etc=false
+          vram_texture_compression/no_bptc_fallbacks=false
+          html/export_icon=true
+          html/canvas_resize_policy=2
+          html/focus_canvas_on_start=true
+          binary_format/embed_pck=true
+          EOF
+          echo "==== export_presets.cfg written ===="
+          sed -n '1,200p' export_presets.cfg
+
+      # Sanity: project.godot must be at repo root
+      - name: Verify project.godot exists at root
+        run: |
+          test -f project.godot || (echo "project.godot NOT found at repo root" && exit 1)
+          echo "project.godot found ✅"
 
       - name: Godot version
         run: godot --version
@@ -57,5 +82,11 @@ jobs:
             build/web
             .godot/**/*
             .import/**/*
-            export_presets.cfg
-            project.godot
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: build/web
+          force_orphan: true
