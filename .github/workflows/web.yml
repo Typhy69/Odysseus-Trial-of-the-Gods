@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Docker)
+name: Godot 4 HTML5 Export (Diagnostic + LFS)
 
 on:
   push:
@@ -14,17 +14,48 @@ jobs:
   export:
     runs-on: ubuntu-latest
     container: barichello/godot-ci:4.2.2
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Export Web
+      - name: Checkout (with LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Show repo tree
+        run: |
+          pwd
+          ls -la
+          echo "---- scenes/"; ls -la scenes || true
+          echo "---- scripts/"; ls -la scripts || true
+          echo "---- audio/music"; ls -la audio/music || true
+
+      - name: Show export presets
+        run: |
+          echo "==== export_presets.cfg ===="
+          test -f export_presets.cfg && sed -n '1,200p' export_presets.cfg || echo "export_presets.cfg NOT FOUND"
+          echo "==== grep Web preset ===="
+          (grep -n "\[preset.*Web\]" export_presets.cfg && echo "Found Web preset ✅") || (echo "Missing Web preset ❌"; exit 1)
+
+      - name: Godot version
+        run: godot --version
+
+      - name: Export HTML5 (verbose)
         run: |
           mkdir -p build/web
-          godot --headless --export-release "Web" build/web/index.html
-      - name: Create 404.html
+          godot --headless --verbose --export-release "Web" build/web/index.html
+
+      - name: Create 404.html (SPA fallback)
+        if: success()
         run: cp build/web/index.html build/web/404.html || true
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+
+      - name: Upload build artifact (for debugging if needed)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: build/web
-          force_orphan: true
+          name: web-build-or-logs
+          path: |
+            build/web
+            .godot/**/*
+            .import/**/*
+            export_presets.cfg
+            project.godot
