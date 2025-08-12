@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Self-healing Web preset)
+name: Godot 4 HTML5 Export (Self-healing)
 
 on:
   push:
@@ -13,9 +13,10 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    container: barichello/godot-ci:4.2.2   # Godot 4.2.2 + templates preinstalled
+    container: barichello/godot-ci:4.2.2
+
     steps:
-      - name: Checkout (with LFS for audio)
+      - name: Checkout (with LFS)
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -27,36 +28,23 @@ jobs:
           echo "---- scenes/"; ls -la scenes || true
           echo "---- scripts/"; ls -la scripts || true
 
-      # ✅ Force-create/overwrite export_presets.cfg with a 'Web' preset
-      - name: Ensure Web export preset
+      - name: Ensure Web export preset (write/overwrite)
         run: |
           cat > export_presets.cfg <<'EOF'
           [preset.0]
           name="Web"
           platform="Web"
-          runnable=false
-          dedicated_server=false
           export_filter="all_resources"
           export_path="build/web/index.html"
 
           [preset.0.options]
-          custom_template/debug=""
-          custom_template/release=""
-          vram_texture_compression/bptc=true
-          vram_texture_compression/s3tc=true
-          vram_texture_compression/etc2=true
-          vram_texture_compression/etc=false
-          vram_texture_compression/no_bptc_fallbacks=false
-          html/export_icon=true
-          html/canvas_resize_policy=2
-          html/focus_canvas_on_start=true
           binary_format/embed_pck=true
+          html/canvas_resize_policy=2
           EOF
-          echo "==== export_presets.cfg written ===="
+          echo "==== export_presets.cfg ===="
           sed -n '1,200p' export_presets.cfg
 
-      # Sanity: project.godot must be at repo root
-      - name: Verify project.godot exists at root
+      - name: Verify project.godot at root
         run: |
           test -f project.godot || (echo "project.godot NOT found at repo root" && exit 1)
           echo "project.godot found ✅"
@@ -73,7 +61,7 @@ jobs:
         if: success()
         run: cp build/web/index.html build/web/404.html || true
 
-      - name: Upload build artifact (for debugging if needed)
+      - name: Upload build artifact (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
