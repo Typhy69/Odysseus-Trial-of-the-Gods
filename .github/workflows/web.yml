@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Self-healing)
+name: Godot 4 HTML5 Export (Diagnostic + Self-healing)
 
 on:
   push:
@@ -13,23 +13,27 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    container: barichello/godot-ci:4.2.2
+    container: barichello/godot-ci:4.2.2   # Godot 4.2.2 + HTML5 templates preinstalled
 
     steps:
-      - name: Checkout (with LFS)
+      - name: Checkout (with LFS for audio)
         uses: actions/checkout@v4
         with:
           lfs: true
 
       - name: Show repo tree
         run: |
+          set -euxo pipefail
           pwd
           ls -la
           echo "---- scenes/"; ls -la scenes || true
           echo "---- scripts/"; ls -la scripts || true
+          echo "---- audio/music"; ls -la audio/music || true
 
-      - name: Ensure Web export preset (write/overwrite)
+      # Ensure a valid Web preset exists (overwrites if present)
+      - name: Ensure Web export preset
         run: |
+          set -euxo pipefail
           cat > export_presets.cfg <<'EOF'
           [preset.0]
           name="Web"
@@ -44,24 +48,55 @@ jobs:
           echo "==== export_presets.cfg ===="
           sed -n '1,200p' export_presets.cfg
 
+      # Sanity: project.godot must be at repo root
       - name: Verify project.godot at root
         run: |
+          set -euxo pipefail
           test -f project.godot || (echo "project.godot NOT found at repo root" && exit 1)
           echo "project.godot found ✅"
+          echo "==== project.godot ===="
+          sed -n '1,200p' project.godot || true
 
-      - name: Godot version
-        run: godot --version
+      # Optional: if an autoload path is wrong it can crash silently; comment it out temporarily
+      - name: Temporarily disable AudioManager autoload if missing
+        run: |
+          set -euxo pipefail
+          if ! [ -f scripts/AudioManager.gd ]; then
+            awk 'BEGIN{p=1}/^\[autoload\]/{p=0} p{print} /^\[autoload\]/{print "; AudioManager=\"*res://scripts/AudioManager.gd\""}' project.godot > project.tmp
+            mv project.tmp project.godot
+            echo "⚠️ scripts/AudioManager.gd not found; autoload commented for this run."
+          fi
 
+      # Force Godot to import assets first (prevents export-time importer errors)
+      - name: Godot version & pre-import
+        run: |
+          set -euxo pipefail
+          godot --version
+          # open headless editor once so .import/ is populated
+          godot --headless -e --quit
+
+      # Verify main scene exists where project.godot points
+      - name: Check main scene exists
+        run: |
+          set -euxo pipefail
+          MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
+          echo "Main scene from project.godot:" "$MAIN"
+          test -f "$MAIN" || (echo "Main scene not found at $MAIN" && exit 1)
+
+      # Export (verbose)
       - name: Export HTML5 (verbose)
         run: |
+          set -euxo pipefail
           mkdir -p build/web
           godot --headless --verbose --export-release "Web" build/web/index.html
 
-      - name: Create 404.html (SPA fallback)
+      # SPA 404 fallback
+      - name: Create 404.html
         if: success()
         run: cp build/web/index.html build/web/404.html || true
 
-      - name: Upload build artifact (always)
+      # Always upload artifacts so we can see logs even on failure
+      - name: Upload build or logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -70,7 +105,10 @@ jobs:
             build/web
             .godot/**/*
             .import/**/*
+            export_presets.cfg
+            project.godot
 
+      # Deploy to Pages
       - name: Deploy to GitHub Pages
         if: success()
         uses: peaceiris/actions-gh-pages@v3
