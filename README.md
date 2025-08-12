@@ -14,7 +14,7 @@ Battle through the mythical islands of Greek legend, face legendary beasts, and 
 ## 📜 Story
 You are **Odysseus**, hero of Ithaca.  
 Journey across perilous islands, face fearsome foes like the **Cyclops**, **Hydra**, and **Talos**, and win the favor of the gods.  
-Survive each island’s trials, defeat the boss, and return home to your beloved Penelope.
+Survive each island’s trials, defeat the boss, and return home to your beloved Penelope where you will be forever a legend.
 
 ---
 
