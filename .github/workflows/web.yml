@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Diagnostic + Self-healing)
+name: Godot 4 HTML5 Export (Diagnostic+Logs)
 
 on:
   push:
@@ -10,7 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# ✅ Force bash for all run steps (fixes 'set: Illegal option -o pipefail')
 defaults:
   run:
     shell: bash
@@ -18,11 +17,10 @@ defaults:
 jobs:
   export:
     runs-on: ubuntu-latest
-    # Godot 4.2.2 editor + HTML5 templates preinstalled (no flaky downloads)
-    container: barichello/godot-ci:4.2.2
+    container: barichello/godot-ci:4.2.2  # Godot 4.2.2 + HTML5 templates
 
     steps:
-      - name: Checkout (with LFS for audio)
+      - name: Checkout (with LFS)
         uses: actions/checkout@v4
         with:
           lfs: true
@@ -36,7 +34,6 @@ jobs:
           echo "---- scripts/"; ls -la scripts || true
           echo "---- audio/music"; ls -la audio/music || true
 
-      # ✅ Ensure a valid Web export preset exists (overwrites if present)
       - name: Ensure Web export preset
         run: |
           set -euxo pipefail
@@ -51,26 +48,20 @@ jobs:
           binary_format/embed_pck=true
           html/canvas_resize_policy=2
           EOF
-          echo "==== export_presets.cfg ===="
           sed -n '1,200p' export_presets.cfg
 
-      # Sanity: project.godot must be at repo root
       - name: Verify project.godot at root
         run: |
           set -euxo pipefail
           test -f project.godot || (echo "project.godot NOT found at repo root" && exit 1)
-          echo "project.godot found ✅"
           echo "==== project.godot ===="
           sed -n '1,200p' project.godot || true
 
-      # If AudioManager autoload points to a missing file, temporarily comment it out for this run
       - name: Temporarily disable AudioManager autoload if missing
         run: |
           set -euxo pipefail
           if ! [ -f scripts/AudioManager.gd ]; then
-            # comment out autoload block line for AudioManager to prevent export crash
             awk '
-              BEGIN{skip=0}
               /^\[autoload\]/{print; next}
               /^\s*AudioManager=.*res:\/\/scripts\/AudioManager.gd/ { print "; " $0; next }
               { print }
@@ -78,36 +69,31 @@ jobs:
             echo "⚠️ scripts/AudioManager.gd not found; autoload commented for this run."
           fi
 
-      # Pre-import assets so .import/ is populated (reduces exporter surprises)
-      - name: Godot version & pre-import
+      - name: Godot version & pre-import (logs to editor_log.txt)
         run: |
           set -euxo pipefail
-          godot --version
-          godot --headless -e --quit
+          godot --version |& tee editor_log.txt
+          godot --headless -e --quit |& tee -a editor_log.txt
 
-      # Make sure the main scene exists where project.godot points
-      - name: Check main scene exists
+      - name: Check main scene exists (and print it)
         run: |
           set -euxo pipefail
           MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
           echo "Main scene from project.godot: $MAIN"
-          test -f "$MAIN" || (echo "Main scene not found at $MAIN" && exit 1)
+          ls -la "$(dirname "$MAIN")" || true
+          test -f "$MAIN" || (echo "❌ Main scene not found at $MAIN" && exit 1)
 
-      # Export (verbose)
-      - name: Export HTML5 (verbose)
+      - name: Export HTML5 (verbose → export_log.txt)
         run: |
           set -euxo pipefail
           mkdir -p build/web
-          godot --headless --verbose --export-release "Web" build/web/index.html
+          godot --headless --verbose --export-release "Web" build/web/index.html |& tee export_log.txt
+          ls -la build/web || true
 
-      # SPA fallback
-      - name: Create 404.html
+      - name: 404 fallback
         if: success()
-        run: |
-          set -euxo pipefail
-          cp build/web/index.html build/web/404.html || true
+        run: cp build/web/index.html build/web/404.html || true
 
-      # Always upload artifacts (so we can inspect logs even on failure)
       - name: Upload build or logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -115,16 +101,11 @@ jobs:
           name: web-build-or-logs
           path: |
             build/web
-            .godot/**/*
-            .import/**/*
+            export_log.txt
+            editor_log.txt
             export_presets.cfg
             project.godot
-
-      # Deploy to GitHub Pages
-      - name: Deploy to GitHub Pages
-        if: success()
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: build/web
-          force_orphan: true
+            .godot/**/*
+            .import/**/*
+            scenes/**/*
+            scripts/**/*
