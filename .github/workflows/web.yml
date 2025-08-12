@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Diagnostic+Logs)
+name: Godot 4 HTML5 Export (Auto-locate project.godot)
 
 on:
   push:
@@ -20,24 +20,40 @@ jobs:
     container: barichello/godot-ci:4.2.2  # Godot 4.2.2 + HTML5 templates
 
     steps:
-      - name: Checkout (with LFS)
+      - name: Checkout (with LFS for audio)
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Show repo tree
+      - name: Locate project.godot (anywhere in repo)
         run: |
           set -euxo pipefail
-          pwd
-          ls -la
-          echo "---- scenes/"; ls -la scenes || true
-          echo "---- scripts/"; ls -la scripts || true
-          echo "---- audio/music"; ls -la audio/music || true
+          # Prefer a root-level project.godot if present
+          if [[ -f project.godot ]]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          else
+            # search, but ignore .git and build/export folders
+            FOUND=$(git ls-files | grep -E '(^|/)[Pp]roject\.godot$' | head -n1 || true)
+            if [[ -z "$FOUND" ]]; then
+              echo "❌ Could not find project.godot anywhere in the repo"; exit 1
+            fi
+            echo "Found: $FOUND"
+            echo "PROJECT_DIR=$(dirname "$FOUND")" >> "$GITHUB_ENV"
+          fi
+          echo "Project dir is: ${PROJECT_DIR:-.}"
 
-      - name: Ensure Web export preset
+      - name: Show tree (project dir)
         run: |
           set -euxo pipefail
-          cat > export_presets.cfg <<'EOF'
+          echo "PROJECT_DIR=$PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+          echo "---- scenes/"; ls -la "$PROJECT_DIR/scenes" || true
+          echo "---- scripts/"; ls -la "$PROJECT_DIR/scripts" || true
+
+      - name: Ensure Web export preset in project dir
+        run: |
+          set -euxo pipefail
+          cat > "$PROJECT_DIR/export_presets.cfg" <<'EOF'
           [preset.0]
           name="Web"
           platform="Web"
@@ -48,51 +64,51 @@ jobs:
           binary_format/embed_pck=true
           html/canvas_resize_policy=2
           EOF
-          sed -n '1,200p' export_presets.cfg
+          echo "==== export_presets.cfg ===="
+          sed -n '1,200p' "$PROJECT_DIR/export_presets.cfg"
 
-      - name: Verify project.godot at root
+      - name: Verify project.godot exists (in project dir)
         run: |
           set -euxo pipefail
-          test -f project.godot || (echo "project.godot NOT found at repo root" && exit 1)
+          test -f "$PROJECT_DIR/project.godot" || (echo "project.godot NOT found in $PROJECT_DIR" && exit 1)
           echo "==== project.godot ===="
-          sed -n '1,200p' project.godot || true
+          sed -n '1,200p' "$PROJECT_DIR/project.godot" || true
 
       - name: Temporarily disable AudioManager autoload if missing
         run: |
           set -euxo pipefail
-          if ! [ -f scripts/AudioManager.gd ]; then
+          if ! [ -f "$PROJECT_DIR/scripts/AudioManager.gd" ]; then
             awk '
               /^\[autoload\]/{print; next}
               /^\s*AudioManager=.*res:\/\/scripts\/AudioManager.gd/ { print "; " $0; next }
               { print }
-            ' project.godot > project.tmp && mv project.tmp project.godot
+            ' "$PROJECT_DIR/project.godot" > "$PROJECT_DIR/project.tmp" && mv "$PROJECT_DIR/project.tmp" "$PROJECT_DIR/project.godot"
             echo "⚠️ scripts/AudioManager.gd not found; autoload commented for this run."
           fi
 
-      - name: Godot version & pre-import (logs to editor_log.txt)
+      - name: Godot version & pre-import
         run: |
           set -euxo pipefail
-          godot --version |& tee editor_log.txt
-          godot --headless -e --quit |& tee -a editor_log.txt
+          godot --version
+          (cd "$PROJECT_DIR" && godot --headless -e --quit) |& tee editor_log.txt
 
-      - name: Check main scene exists (and print it)
+      - name: Check main scene exists
         run: |
           set -euxo pipefail
-          MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
+          MAIN=$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 | sed 's#^res://##')
           echo "Main scene from project.godot: $MAIN"
-          ls -la "$(dirname "$MAIN")" || true
-          test -f "$MAIN" || (echo "❌ Main scene not found at $MAIN" && exit 1)
+          test -f "$PROJECT_DIR/$MAIN" || (echo "❌ Main scene not found at $PROJECT_DIR/$MAIN" && exit 1)
 
       - name: Export HTML5 (verbose → export_log.txt)
         run: |
           set -euxo pipefail
-          mkdir -p build/web
-          godot --headless --verbose --export-release "Web" build/web/index.html |& tee export_log.txt
-          ls -la build/web || true
+          mkdir -p "$PROJECT_DIR/build/web"
+          (cd "$PROJECT_DIR" && godot --headless --verbose --export-release "Web" build/web/index.html) |& tee export_log.txt
+          ls -la "$PROJECT_DIR/build/web" || true
 
       - name: 404 fallback
         if: success()
-        run: cp build/web/index.html build/web/404.html || true
+        run: cp "$PROJECT_DIR/build/web/index.html" "$PROJECT_DIR/build/web/404.html" || true
 
       - name: Upload build or logs
         if: always()
@@ -100,12 +116,21 @@ jobs:
         with:
           name: web-build-or-logs
           path: |
-            build/web
+            ${{ env.PROJECT_DIR }}/build/web
             export_log.txt
             editor_log.txt
-            export_presets.cfg
-            project.godot
-            .godot/**/*
-            .import/**/*
-            scenes/**/*
-            scripts/**/*
+            ${{ env.PROJECT_DIR }}/export_presets.cfg
+            ${{ env.PROJECT_DIR }}/project.godot
+            ${{ env.PROJECT_DIR }}/.godot/**/*
+            ${{ env.PROJECT_DIR }}/.import/**/*
+            ${{ env.PROJECT_DIR }}/scenes/**/*
+            ${{ env.PROJECT_DIR }}/scripts/**/*
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # publish whatever project dir built
+          publish_dir: ${{ env.PROJECT_DIR }}/build/web
+          force_orphan: true
