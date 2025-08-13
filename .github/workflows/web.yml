@@ -1,4 +1,4 @@
-name: Godot Web Export (Minimal + Templates)
+name: Godot Web Export (Setup Action)
 
 on:
   push:
@@ -7,32 +7,32 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    container:
-      image: barichello/godot-ci:4.2.2
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Install Godot 4.2.2 export templates
-        run: |
-          set -e
-          mkdir -p ~/.local/share/godot/export_templates/4.2.2.stable
-          wget -O /tmp/templates.tpz \
-            https://github.com/godotengine/godot/releases/download/4.2.2-stable/Godot_v4.2.2-stable_export_templates.tpz
-          unzip -q /tmp/templates.tpz -d ~/.local/share/godot/export_templates/4.2.2.stable
+      # ✅ Installs Godot 4.2.2 + HTML5 export templates from GitHub Releases
+      - name: Setup Godot
+        uses: firebelley/setup-godot@v1.4
+        with:
+          version: '4.2.2'
+          export-templates: true
 
       - name: Verify project.godot at repo root
         run: |
           set -e
           test -f project.godot || { echo "project.godot NOT at repo root"; exit 1; }
-          echo "Found project.godot at repo root"
 
-      - name: Write minimal Web preset
+      - name: Write minimal Web preset (create/overwrite)
         run: |
           set -e
           cat > export_presets.cfg <<'EOF'
