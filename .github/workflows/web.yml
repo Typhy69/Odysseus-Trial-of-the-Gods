@@ -1,4 +1,4 @@
-name: Godot Web Export (Minimal)
+name: Godot Web Export (Minimal + Templates)
 
 on:
   push:
@@ -12,16 +12,27 @@ jobs:
   export:
     runs-on: ubuntu-latest
     container:
-      image: barichello/godot-ci:4.2.2
+      image: barichello/godot-ci:4.2.2  # Godot 4.2.2 editor in a Docker image
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ✅ Install HTML5 export templates from GitHub Releases (no TuxFamily)
+      - name: Install Godot 4.2.2 export templates
+        run: |
+          set -e
+          mkdir -p ~/.local/share/godot/export_templates/4.2.2.stable
+          curl -L --retry 5 --retry-delay 5 --fail \
+            -o /tmp/templates.tpz \
+            https://github.com/godotengine/godot/releases/download/4.2.2-stable/Godot_v4.2.2-stable_export_templates.tpz
+          unzip -q /tmp/templates.tpz -d ~/.local/share/godot/export_templates/4.2.2.stable
+
       - name: Verify project.godot at repo root
         run: |
           set -e
-          test -f project.godot || (echo "project.godot NOT at repo root"; exit 1)
+          test -f project.godot || { echo "project.godot NOT at repo root"; exit 1; }
+          echo "Found project.godot at repo root"
 
       - name: Write minimal Web preset
         run: |
@@ -54,8 +65,8 @@ jobs:
         run: |
           set -e
           MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
-          [ -n "$MAIN" ] || (echo "run/main_scene not set in project.godot"; exit 1)
-          [ -f "$MAIN" ] || (echo "Main scene not found at $MAIN"; exit 1)
+          [ -n "$MAIN" ] || { echo "run/main_scene not set in project.godot"; exit 1; }
+          [ -f "$MAIN" ] || { echo "Main scene not found at $MAIN"; exit 1; }
 
       - name: Export HTML5
         run: |
@@ -64,7 +75,7 @@ jobs:
           godot --headless --export-release "Web" build/web/index.html
           cp build/web/index.html build/web/404.html || true
 
-      - name: Upload build artifact
+      - name: Upload web build
         uses: actions/upload-artifact@v4
         with:
           name: web-build
