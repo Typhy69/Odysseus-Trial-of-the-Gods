@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Auto-fix + Logs)
+name: Godot 4 HTML5 Export
 
 on:
   push:
@@ -14,136 +14,66 @@ defaults:
   run:
     shell: bash
 
+env:
+  PROJECT_DIR: .
+  EXPORT_NAME: odysseus-web
+  EXPORT_PRESET: Web
+
 jobs:
   export:
     runs-on: ubuntu-latest
-    container: barichello/godot-ci:4.2.2   # Godot 4.2.2 + HTML5 templates
+    container: barichello/godot-ci:4.2.2
 
     steps:
-      - name: Checkout (with LFS for audio)
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Mark workspace as safe for Git
-        run: |
-          set -euxo pipefail
-          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
-          git config --global --add safe.directory "$PWD" || true
-
-      - name: Locate project.godot
-        run: |
-          set -euxo pipefail
-          if [[ -f project.godot ]]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          else
-            FOUND=$(find . -type f -iname 'project.godot' -not -path '*/.git/*' | sort | head -n1 || true)
-            [[ -z "$FOUND" ]] && { echo "❌ No project.godot found"; exit 1; }
-            echo "Found: $FOUND"
-            echo "PROJECT_DIR=$(dirname "$FOUND")" >> "$GITHUB_ENV"
-          fi
-          echo "Project dir: ${PROJECT_DIR:-.}"
-
-      - name: Show tree (project dir)
-        run: |
-          set -euxo pipefail
-          ls -la "$PROJECT_DIR"
-          ls -la "$PROJECT_DIR/scenes" || true
-          ls -la "$PROJECT_DIR/scripts" || true
-
-      - name: Ensure Web export preset
-        run: |
-          set -euxo pipefail
-          cat > "$PROJECT_DIR/export_presets.cfg" <<'EOF'
-          [preset.0]
-          name="Web"
-          platform="Web"
-          export_filter="all_resources"
-          export_path="build/web/index.html"
-
-          [preset.0.options]
-          binary_format/embed_pck=true
-          html/canvas_resize_policy=2
-          EOF
-          sed -n '1,200p' "$PROJECT_DIR/export_presets.cfg"
 
       - name: Verify project.godot & ensure icon exists
         run: |
           set -euxo pipefail
           test -f "$PROJECT_DIR/project.godot" || { echo "project.godot NOT in $PROJECT_DIR"; exit 1; }
-          echo "==== project.godot (first 200 lines) ===="
           sed -n '1,200p' "$PROJECT_DIR/project.godot" || true
-          # Extract icon path if any (e.g., res://icon.svg)
+
           ICON=$(grep -E '^config/icon=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 || true)
+          echo "ICON=${ICON:-<none>}"
           if [[ -n "$ICON" ]]; then
             ICON_CLEAN="${ICON#res://}"
-            if [[ ! -f "$PROJECT_DIR/$ICON_CLEAN" ]]; then
-              echo "⚠️ Icon '$ICON' missing. Creating placeholder at $PROJECT_DIR/$ICON_CLEAN"
-              mkdir -p "$(dirname "$PROJECT_DIR/$ICON_CLEAN")"
-              cat > "$PROJECT_DIR/$ICON_CLEAN" <<'SVG'
-              <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">
-                <rect width="100%" height="100%" fill="#1e1e2e"/>
-                <circle cx="64" cy="64" r="36" fill="#f59e0b"/>
-                <text x="64" y="72" font-size="20" text-anchor="middle" fill="#111">OD</text>
-              </svg>
-              SVG
+            ICON_PATH="$PROJECT_DIR/$ICON_CLEAN"
+            if [[ ! -f "$ICON_PATH" ]]; then
+              echo "⚠️ Icon '$ICON' missing. Creating placeholder at $ICON_PATH"
+              mkdir -p "$(dirname "$ICON_PATH")"
+              printf '%s\n' \
+'<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">' \
+'  <rect width="100%" height="100%" fill="#1e1e2e"/>' \
+'  <circle cx="64" cy="64" r="36" fill="#f59e0b"/>' \
+'  <text x="64" y="72" font-size="20" text-anchor="middle" fill="#111">OD</text>' \
+'</svg>' > "$ICON_PATH"
             fi
           fi
 
-      - name: Temporarily disable AudioManager autoload if missing
+      - name: Verify export_presets.cfg exists
         run: |
           set -euxo pipefail
-          if [[ ! -f "$PROJECT_DIR/scripts/AudioManager.gd" ]]; then
-            awk '
-              /^\[autoload\]/{print; next}
-              /^\s*AudioManager=.*res:\/\/scripts\/AudioManager.gd/ { print "; " $0; next }
-              { print }
-            ' "$PROJECT_DIR/project.godot" > "$PROJECT_DIR/project.tmp" && mv "$PROJECT_DIR/project.tmp" "$PROJECT_DIR/project.godot"
-            echo "⚠️ scripts/AudioManager.gd not found; autoload commented for this run."
+          if [[ ! -f "$PROJECT_DIR/export_presets.cfg" ]]; then
+            echo "❌ Missing export_presets.cfg"
+            exit 1
           fi
+          grep -A3 "\[preset.*$EXPORT_PRESET" "$PROJECT_DIR/export_presets.cfg" || {
+            echo "❌ Missing Web preset in export_presets.cfg"
+            exit 1
+          }
 
-      - name: Godot version & pre-import (log to editor_log.txt)
+      - name: Export game (Web)
         run: |
           set -euxo pipefail
-          godot --version |& tee editor_log.txt
-          (cd "$PROJECT_DIR" && godot --headless -e --quit) |& tee -a editor_log.txt
+          mkdir -p build/web
+          godot --headless --verbose --path "$PROJECT_DIR" --export-release "$EXPORT_PRESET" "build/web/index.html" || {
+            echo "❌ Export failed"
+            exit 1
+          }
 
-      - name: Check main scene exists
-        run: |
-          set -euxo pipefail
-          MAIN=$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 | sed 's#^res://##')
-          echo "Main scene from project.godot: $MAIN"
-          test -f "$PROJECT_DIR/$MAIN" || { echo "❌ Main scene not found at $PROJECT_DIR/$MAIN"; exit 1; }
-
-      - name: Export HTML5 (verbose → export_log.txt)
-        run: |
-          set -euxo pipefail
-          mkdir -p "$PROJECT_DIR/build/web"
-          (cd "$PROJECT_DIR" && godot --headless --verbose --export-release "Web" build/web/index.html) |& tee export_log.txt
-          ls -la "$PROJECT_DIR/build/web" || true
-
-      - name: 404 fallback
-        if: success()
-        run: cp "$PROJECT_DIR/build/web/index.html" "$PROJECT_DIR/build/web/404.html" || true
-
-      - name: Upload build or logs
-        if: always()
+      - name: Upload web build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: web-build-or-logs
-          path: |
-            ${{ env.PROJECT_DIR }}/build/web
-            export_log.txt
-            editor_log.txt
-            ${{ env.PROJECT_DIR }}/export_presets.cfg
-            ${{ env.PROJECT_DIR }}/project.godot
-            ${{ env.PROJECT_DIR }}/scenes/**/*
-            ${{ env.PROJECT_DIR }}/scripts/**/*
-
-      - name: Deploy to GitHub Pages
-        if: success()
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.PROJECT_DIR }}/build/web
-          force_orphan: true
+          name: web-build
+          path: build/web
