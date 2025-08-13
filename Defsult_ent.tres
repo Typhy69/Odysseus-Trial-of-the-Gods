@@ -1,0 +1,5 @@
+[gd_resource type="Environment" load_steps=2 format=3]
+
+[resource]
+background_mode = 1
+adjustment_enabled = true
