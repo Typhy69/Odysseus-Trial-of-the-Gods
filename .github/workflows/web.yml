@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Clean)
+name: Godot 4 HTML5 Export (Minimal, Root Project)
 
 on:
   push:
@@ -25,65 +25,54 @@ jobs:
         with:
           lfs: true
 
-      - name: Locate project.godot
+      - name: Verify project.godot at repo root
         run: |
-          set -euxo pipefail
-          if [ -f project.godot ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          else
-            FOUND="$(find . -type f -iname 'project.godot' -not -path '*/.git/*' | sort | head -n1 || true)"
-            if [ -z "$FOUND" ]; then
-              echo "No project.godot found"; exit 1
-            fi
-            echo "Found $FOUND"
-            echo "PROJECT_DIR=$(dirname "$FOUND")" >> "$GITHUB_ENV"
-          fi
-          echo "Using PROJECT_DIR=${PROJECT_DIR:-.}"
+          set -eux
+          test -f project.godot || { echo "project.godot NOT at repo root"; exit 1; }
+          echo "Found project.godot at repo root"
 
-      - name: Ensure Web preset
+      - name: Ensure Web export preset (create/overwrite)
         run: |
-          set -euxo pipefail
-          cat > "$PROJECT_DIR/export_presets.cfg" <<EOF
-[preset.0]
-name="Web"
-platform="Web"
-export_filter="all_resources"
-export_path="build/web/index.html"
+          set -eux
+          printf '%s\n' \
+"[preset.0]" \
+"name=\"Web\"" \
+"platform=\"Web\"" \
+"export_filter=\"all_resources\"" \
+"export_path=\"build/web/index.html\"" \
+"" \
+"[preset.0.options]" \
+"binary_format/embed_pck=true" \
+"html/canvas_resize_policy=2" > export_presets.cfg
+          sed -n '1,120p' export_presets.cfg
 
-[preset.0.options]
-binary_format/embed_pck=true
-html/canvas_resize_policy=2
-EOF
-          sed -n '1,120p' "$PROJECT_DIR/export_presets.cfg"
-
-      - name: Ensure icon exists
+      - name: Ensure icon exists (placeholder if missing)
         run: |
-          set -euxo pipefail
-          test -f "$PROJECT_DIR/project.godot" || { echo "project.godot missing in $PROJECT_DIR"; exit 1; }
-          ICON="$(grep -E '^config/icon=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 || true)"
+          set -eux
+          ICON=$(grep -E '^config/icon=' project.godot | cut -d\" -f2 || true)
           if [ -n "$ICON" ]; then
             REL="${ICON#res://}"
-            PATH_ICON="$PROJECT_DIR/$REL"
-            if [ ! -f "$PATH_ICON" ]; then
-              mkdir -p "$(dirname "$PATH_ICON")"
-              printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="100%" height="100%" fill="#1e1e2e"/><circle cx="64" cy="64" r="36" fill="#f59e0b"/><text x="64" y="72" font-size="20" text-anchor="middle" fill="#111">OD</text></svg>' > "$PATH_ICON"
-            fi
+            [ -f "$REL" ] || {
+              mkdir -p "$(dirname "$REL")"
+              printf '%s\n' \
+'<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="100%" height="100%" fill="#1e1e2e"/><circle cx="64" cy="64" r="36" fill="#f59e0b"/><text x="64" y="72" font-size="20" text-anchor="middle" fill="#111">OD</text></svg>' > "$REL"
+            }
           fi
 
       - name: Check main scene exists
         run: |
-          set -euxo pipefail
-          MAIN="$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 | sed 's#^res://##')"
-          echo "Main scene: $MAIN"
-          test -n "$MAIN" || { echo "run/main_scene not set in project.godot"; exit 1; }
-          test -f "$PROJECT_DIR/$MAIN" || { echo "Main scene not found at $PROJECT_DIR/$MAIN"; exit 1; }
+          set -eux
+          MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
+          [ -n "$MAIN" ] || { echo "run/main_scene not set in project.godot"; exit 1; }
+          [ -f "$MAIN" ] || { echo "Main scene not found at $MAIN"; exit 1; }
 
-      - name: Export HTML5
+      - name: Export HTML5 (verbose)
         run: |
-          set -euxo pipefail
-          mkdir -p "$PROJECT_DIR/build/web"
-          (cd "$PROJECT_DIR" && godot --headless --verbose --export-release "Web" build/web/index.html) | tee export_log.txt
-          cp "$PROJECT_DIR/build/web/index.html" "$PROJECT_DIR/build/web/404.html" || true
+          set -eux
+          mkdir -p build/web
+          godot --headless --verbose --export-release "Web" build/web/index.html | tee export_log.txt
+          cp build/web/index.html build/web/404.html || true
+          ls -la build/web || true
 
       - name: Upload build or logs
         if: always()
@@ -91,15 +80,15 @@ EOF
         with:
           name: web-build-or-logs
           path: |
-            ${PROJECT_DIR}/build/web
+            build/web
             export_log.txt
-            ${PROJECT_DIR}/export_presets.cfg
-            ${PROJECT_DIR}/project.godot
+            export_presets.cfg
+            project.godot
 
       - name: Deploy to GitHub Pages
         if: success()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.PROJECT_DIR }}/build/web
+          publish_dir: build/web
           force_orphan: true
