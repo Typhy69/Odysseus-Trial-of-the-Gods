@@ -1,4 +1,4 @@
-name: Godot Web Export (Setup Action)
+name: Godot Web Export (No external actions)
 
 on:
   push:
@@ -15,24 +15,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Check out your code
       - name: Checkout
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      # ✅ Installs Godot 4.2.2 + HTML5 export templates from GitHub Releases
-      - name: Setup Godot
-        uses: firebelley/setup-godot@v1.4
-        with:
-          version: '4.2.2'
-          export-templates: true
+      # 2) Install Godot editor (4.2.2) from GitHub Releases
+      - name: Install Godot editor
+        run: |
+          set -e
+          GODOT_VER="4.2.2"
+          mkdir -p "$HOME/godot_bin"
+          wget -O /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VER}-stable/Godot_v${GODOT_VER}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d "$HOME/godot_bin"
+          chmod +x "$HOME/godot_bin/Godot_v${GODOT_VER}-stable_linux.x86_64"
+          echo "GODOT_BIN=$HOME/godot_bin/Godot_v${GODOT_VER}-stable_linux.x86_64" >> $GITHUB_ENV
+          echo "Godot editor installed at: $HOME/godot_bin"
 
-      - name: Verify project.godot at repo root
+      # 3) Install HTML5 export templates
+      - name: Install export templates (HTML5)
+        run: |
+          set -e
+          GODOT_VER="4.2.2"
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VER}.stable"
+          mkdir -p "$DEST"
+          wget -O /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VER}-stable/Godot_v${GODOT_VER}-stable_export_templates.tpz"
+          mkdir -p /tmp/templates
+          unzip -q /tmp/templates.tpz -d /tmp/templates
+          # Move contents inside 'templates/' into expected directory
+          mv /tmp/templates/templates/* "$DEST"/
+          echo "Templates installed to: $DEST"
+
+      # 4) Verify project.godot at repo root
+      - name: Verify project at root
         run: |
           set -e
           test -f project.godot || { echo "project.godot NOT at repo root"; exit 1; }
 
-      - name: Write minimal Web preset (create/overwrite)
+      # 5) Write minimal Web preset (so export can't complain)
+      - name: Write Web export preset
         run: |
           set -e
           cat > export_presets.cfg <<'EOF'
@@ -47,7 +69,8 @@ jobs:
           EOF
           sed -n '1,120p' export_presets.cfg
 
-      - name: Ensure icon exists (placeholder if missing)
+      # 6) Ensure icon exists (placeholder if missing)
+      - name: Ensure icon
         run: |
           set -e
           ICON=$(grep -E '^config/icon=' project.godot | cut -d\" -f2 || true)
@@ -59,26 +82,35 @@ jobs:
             fi
           fi
 
-      - name: Check main scene exists
+      # 7) Check main scene actually exists
+      - name: Check main scene
         run: |
           set -e
           MAIN=$(grep -E '^run/main_scene=' project.godot | cut -d\" -f2 | sed 's#^res://##')
           [ -n "$MAIN" ] || { echo "run/main_scene not set in project.godot"; exit 1; }
           [ -f "$MAIN" ] || { echo "Main scene not found at $MAIN"; exit 1; }
 
+      # 8) Export HTML5 (with small retry to tolerate flakiness)
       - name: Export HTML5
         run: |
           set -e
           mkdir -p build/web
-          godot --headless --export-release "Web" build/web/index.html
+          for i in 1 2; do
+            "$GODOT_BIN" --headless --export-release "Web" build/web/index.html && break || {
+              echo "Export attempt $i failed; retrying in 10s..."; sleep 10;
+            }
+          done
           cp build/web/index.html build/web/404.html || true
+          ls -la build/web || true
 
+      # 9) Upload the build as an artifact
       - name: Upload web build
         uses: actions/upload-artifact@v4
         with:
           name: web-build
           path: build/web
 
+      # 10) Deploy to GitHub Pages
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
