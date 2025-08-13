@@ -1,0 +1,33 @@
+; Engine configuration file.
+; Format: INI (Godot 4.x)
+config_version=5
+
+[application]
+config/name="Odysseus: Trial of the Gods"
+config/icon="res://icon.svg"                   ; change if you use icon.png instead
+run/main_scene="res://scenes/Title.tscn"       ; <-- make sure this file exists
+
+; Optional: record the Godot feature tag (helps some plugins/tools)
+config/features=PackedStringArray("4.2", "GL_Compatibility")
+
+[display]
+; 720p logical resolution, scales to browser window
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[autoload]
+; If this script exists, keep the next line.
+; If it does NOT (yet) exist, delete or comment it to avoid export errors.
+AudioManager="*res://scripts/AudioManager.gd"
+
+; --- You can add more autoloads later, e.g.:
+; GameManager="*res://scripts/GameManager.gd"
+
+; ----- OPTIONAL SECTIONS YOU CAN ADD LATER -----
+; [input]          ; define actions like move_left / attack, etc.
+; [rendering]      ; renderer tweaks (forward_plus, etc.)
+; [physics]        ; 2D/3D physics settings
+; [gui]            ; default theme, fonts
+; [audio]          ; bus layout, volumes
