@@ -1,4 +1,4 @@
-name: Godot 4 HTML5 Export (Auto-locate + Safe Git)
+name: Godot 4 HTML5 Export (Auto-fix + Logs)
 
 on:
   push:
@@ -17,7 +17,7 @@ defaults:
 jobs:
   export:
     runs-on: ubuntu-latest
-    container: barichello/godot-ci:4.2.2  # Godot 4.2.2 + HTML5 templates
+    container: barichello/godot-ci:4.2.2   # Godot 4.2.2 + HTML5 templates
 
     steps:
       - name: Checkout (with LFS for audio)
@@ -25,43 +25,32 @@ jobs:
         with:
           lfs: true
 
-      # ✅ Mark the workspace as safe for Git (fixes "dubious ownership")
       - name: Mark workspace as safe for Git
         run: |
           set -euxo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
           git config --global --add safe.directory "$PWD" || true
-          git config --global --list
 
-      # ✅ Auto-locate project.godot using 'find' (no Git calls)
-      - name: Locate project.godot (anywhere in repo)
+      - name: Locate project.godot
         run: |
           set -euxo pipefail
-          # Prefer a root-level project.godot
           if [[ -f project.godot ]]; then
             echo "PROJECT_DIR=." >> "$GITHUB_ENV"
           else
-            # Find file named exactly 'project.godot' (case-insensitive match for safety)
-            FOUND=$(find . -type f \( -iname 'project.godot' \) \
-                    -not -path '*/.git/*' -not -path '*/build/*' -not -path '*/export/*' \
-                    -print | sort | head -n1 || true)
-            if [[ -z "$FOUND" ]]; then
-              echo "❌ Could not find project.godot anywhere in the repo"; exit 1
-            fi
+            FOUND=$(find . -type f -iname 'project.godot' -not -path '*/.git/*' | sort | head -n1 || true)
+            [[ -z "$FOUND" ]] && { echo "❌ No project.godot found"; exit 1; }
             echo "Found: $FOUND"
             echo "PROJECT_DIR=$(dirname "$FOUND")" >> "$GITHUB_ENV"
           fi
-          echo "Project dir is: ${PROJECT_DIR:-.}"
+          echo "Project dir: ${PROJECT_DIR:-.}"
 
       - name: Show tree (project dir)
         run: |
           set -euxo pipefail
-          echo "PROJECT_DIR=$PROJECT_DIR"
           ls -la "$PROJECT_DIR"
-          echo "---- scenes/"; ls -la "$PROJECT_DIR/scenes" || true
-          echo "---- scripts/"; ls -la "$PROJECT_DIR/scripts" || true
+          ls -la "$PROJECT_DIR/scenes" || true
+          ls -la "$PROJECT_DIR/scripts" || true
 
-      # Ensure a Web export preset exists alongside project.godot
       - name: Ensure Web export preset
         run: |
           set -euxo pipefail
@@ -71,25 +60,40 @@ jobs:
           platform="Web"
           export_filter="all_resources"
           export_path="build/web/index.html"
+
           [preset.0.options]
           binary_format/embed_pck=true
           html/canvas_resize_policy=2
           EOF
-          echo "==== export_presets.cfg ===="
           sed -n '1,200p' "$PROJECT_DIR/export_presets.cfg"
 
-      - name: Verify project.godot
+      - name: Verify project.godot & ensure icon exists
         run: |
           set -euxo pipefail
-          test -f "$PROJECT_DIR/project.godot" || (echo "project.godot NOT found in $PROJECT_DIR" && exit 1)
-          echo "==== project.godot ===="
-          sed -n '1,120p' "$PROJECT_DIR/project.godot" || true
+          test -f "$PROJECT_DIR/project.godot" || { echo "project.godot NOT in $PROJECT_DIR"; exit 1; }
+          echo "==== project.godot (first 200 lines) ===="
+          sed -n '1,200p' "$PROJECT_DIR/project.godot" || true
+          # Extract icon path if any (e.g., res://icon.svg)
+          ICON=$(grep -E '^config/icon=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 || true)
+          if [[ -n "$ICON" ]]; then
+            ICON_CLEAN="${ICON#res://}"
+            if [[ ! -f "$PROJECT_DIR/$ICON_CLEAN" ]]; then
+              echo "⚠️ Icon '$ICON' missing. Creating placeholder at $PROJECT_DIR/$ICON_CLEAN"
+              mkdir -p "$(dirname "$PROJECT_DIR/$ICON_CLEAN")"
+              cat > "$PROJECT_DIR/$ICON_CLEAN" <<'SVG'
+              <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">
+                <rect width="100%" height="100%" fill="#1e1e2e"/>
+                <circle cx="64" cy="64" r="36" fill="#f59e0b"/>
+                <text x="64" y="72" font-size="20" text-anchor="middle" fill="#111">OD</text>
+              </svg>
+              SVG
+            fi
+          fi
 
-      # If the AudioManager autoload points to a missing file, comment it so export can't crash
       - name: Temporarily disable AudioManager autoload if missing
         run: |
           set -euxo pipefail
-          if ! [ -f "$PROJECT_DIR/scripts/AudioManager.gd" ]; then
+          if [[ ! -f "$PROJECT_DIR/scripts/AudioManager.gd" ]]; then
             awk '
               /^\[autoload\]/{print; next}
               /^\s*AudioManager=.*res:\/\/scripts\/AudioManager.gd/ { print "; " $0; next }
@@ -98,18 +102,18 @@ jobs:
             echo "⚠️ scripts/AudioManager.gd not found; autoload commented for this run."
           fi
 
-      - name: Godot version & pre-import
+      - name: Godot version & pre-import (log to editor_log.txt)
         run: |
           set -euxo pipefail
-          godot --version
-          (cd "$PROJECT_DIR" && godot --headless -e --quit) |& tee editor_log.txt
+          godot --version |& tee editor_log.txt
+          (cd "$PROJECT_DIR" && godot --headless -e --quit) |& tee -a editor_log.txt
 
       - name: Check main scene exists
         run: |
           set -euxo pipefail
           MAIN=$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | cut -d\" -f2 | sed 's#^res://##')
           echo "Main scene from project.godot: $MAIN"
-          test -f "$PROJECT_DIR/$MAIN" || (echo "❌ Main scene not found at $PROJECT_DIR/$MAIN" && exit 1)
+          test -f "$PROJECT_DIR/$MAIN" || { echo "❌ Main scene not found at $PROJECT_DIR/$MAIN"; exit 1; }
 
       - name: Export HTML5 (verbose → export_log.txt)
         run: |
@@ -133,8 +137,6 @@ jobs:
             editor_log.txt
             ${{ env.PROJECT_DIR }}/export_presets.cfg
             ${{ env.PROJECT_DIR }}/project.godot
-            ${{ env.PROJECT_DIR }}/.godot/**/*
-            ${{ env.PROJECT_DIR }}/.import/**/*
             ${{ env.PROJECT_DIR }}/scenes/**/*
             ${{ env.PROJECT_DIR }}/scripts/**/*
 
